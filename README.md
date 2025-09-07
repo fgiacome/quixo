@@ -11,11 +11,13 @@ cargo run --release
 
 ## Rules
 The rules for Quixo are simple:
+1. Two players take turns moving tiles.
 1. You can move any tile from the edges that belongs to you or to no one yet.
-2. Inner tiles cannot be moved.
-3. Tiles that do not belong to you cannot be moved.
-4. If you move a tile that does not belong to anybody, it becomes yours.
-5. Tiles can be moved to occupy one of the terminal positions of the row or column to which they belong, other tiles in that row or column shift accordingly.
+1. Inner tiles cannot be moved.
+1. Tiles that do not belong to you cannot be moved.
+1. If you move a tile that does not belong to anybody, it becomes yours.
+1. Tiles can be moved to occupy one of the terminal positions of the row or column to which they belong, other tiles in that row or column shift accordingly.
+1. First player that can place 5 of his tiles in a row, column or diagonal wins.
 
 ## Usage
 After you launch the program, it will print the board on your terminal. You can
