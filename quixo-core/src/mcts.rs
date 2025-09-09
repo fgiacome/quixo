@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
+use std::sync::mpsc;
 use crate::simulations::{Result, parallel_simulation};
 use crate::game::{find_available_moves, winner, Board, Move, Player};
 
@@ -159,13 +160,17 @@ fn best_move(
 pub fn mcts(
     root: GameState,
     iterations: u32,
-    sim_per_iter: u32
+    sim_per_iter: u32,
+    progress_channel: Option<mpsc::Sender<(u32, Option<Move>)>>
 ) -> Option<Move> {
     let mut node_table: NodeTable = HashMap::new();
     node_table.insert(root, MCTSNode::new());
 
-    for _ in 0..iterations {
+    for i in 0..iterations {
         one_search(&mut node_table, root, sim_per_iter);
+        if let Some(c) = &progress_channel && i % 10 == 0 {
+            let _ = c.send((i, best_move(&node_table, root)));
+        }
     } 
     best_move(&node_table, root)
 }
@@ -195,7 +200,7 @@ mod tests {
         let b = B;
         let p = Player::X;
         let root = GameState { board: b, player: p };
-        let best_move = mcts(root, 100, 1000);
+        let best_move = mcts(root, 100, 1000, None);
         let winning_move = vec![
             Move{x: 1, y: 4, shift: Shift::TOP},
             Move{x: 1, y: 4, shift: Shift::LEFT},

@@ -6,12 +6,19 @@ use quixo_core::{
 };
 use ratatui::{
     DefaultTerminal, Frame,
-    layout::{Constraint::Length, Flex, Layout, Rect},
+    layout::{
+        Constraint::{self, Length},
+        Flex, Layout, Rect,
+    },
     style::Stylize,
     text::{Line, Text},
-    widgets::{Cell, Paragraph, Row, Table},
+    widgets::{Cell, Gauge, Paragraph, Row, Table},
 };
-use std::time::Duration;
+use std::{
+    sync::mpsc,
+    thread::{self, JoinHandle},
+    time::Duration,
+};
 
 fn main() -> color_eyre::Result<()> {
     color_eyre::install()?;
@@ -29,7 +36,10 @@ pub struct App {
     running: bool,
     selected_position: (usize, usize),
     winner: Option<Player>,
- }
+    thread_handle: Option<JoinHandle<Option<Move>>>,
+    progress_channel: Option<mpsc::Receiver<(u32, Option<Move>)>>,
+    progress_value: Option<u32>,
+}
 
 impl App {
     /// Construct a new instance of [`App`].
@@ -40,6 +50,9 @@ impl App {
             running: false,
             selected_position: (0, 0),
             winner: None,
+            thread_handle: None,
+            progress_channel: None,
+            progress_value: None,
         }
     }
 
@@ -66,25 +79,36 @@ impl App {
     /// - <https://docs.rs/ratatui/latest/ratatui/widgets/index.html>
     /// - <https://github.com/ratatui/ratatui/tree/main/ratatui-widgets/examples>
     fn render(&mut self, frame: &mut Frame) {
-        let layout = Layout::vertical([Length(5), Length(1), Length(3)]);
-        let [table_area, status_area, help_area] = layout.areas(frame.area());
+        let layout = Layout::vertical([Length(5), Length(1), Length(1), Length(3)]);
+        let [table_area, status_area, progress_area, help_area] = layout.areas(frame.area());
         let [table_area] = Layout::horizontal([Length(19)])
             .flex(Flex::Center)
             .areas(table_area);
+        let [progress_area] = Layout::horizontal([Constraint::Max(20)])
+            .flex(Flex::Center)
+            .areas(progress_area);
         let status_line = Line::from(format!(
             "Turn: {}, Winner: {}",
             self.turn,
             self.winner.map_or(String::from("-"), |p| p.to_string()),
-         ))
+        ))
         .centered();
+        let gauge = if let Some(p) = self.progress_value {
+            Some(Gauge::default().percent((p / 10) as u16))
+        } else {
+            None
+        };
         let help = Paragraph::new(vec![
             Line::from("left, right, top, bottom: move selection").centered(),
-            Line::from("h, j, k, l: move selected piece").centered(),
+            Line::from("shift + left, right, top, bottom: move selected piece").centered(),
             Line::from("c: call mcts, r: reset, q: quit").centered(),
         ]);
         self.render_table(frame, table_area);
         frame.render_widget(status_line, status_area);
         frame.render_widget(help, help_area);
+        if let Some(g) = gauge {
+            frame.render_widget(g, progress_area);
+        }
     }
 
     pub fn render_table(&mut self, frame: &mut Frame, area: Rect) {
@@ -126,6 +150,25 @@ impl App {
             }
         }
 
+        if let Some(_) = self.thread_handle
+            && let Some(rx) = &self.progress_channel
+            && let Ok(p) = rx.try_recv()
+        {
+            self.progress_value = Some(p.0);
+        }
+
+        if let Some(h) = &self.thread_handle
+            && h.is_finished()
+            && let Some(h) = self.thread_handle.take()
+            && let Some(m) = h.join().unwrap()
+        {
+            self.progress_channel = None;
+            self.progress_value = None;
+            self.board = m.apply(self.turn, &self.board).unwrap();
+            self.turn = self.turn.next();
+            self.winner = winner(&self.board);
+        }
+
         Ok(())
     }
 
@@ -135,73 +178,81 @@ impl App {
             (_, KeyCode::Esc | KeyCode::Char('q'))
             | (KeyModifiers::CONTROL, KeyCode::Char('c') | KeyCode::Char('C')) => self.quit(),
             // Add other key handlers here.
-            (_, KeyCode::Up) => {
+            (KeyModifiers::NONE, KeyCode::Up) => {
                 self.selected_position.0 = match self.selected_position.0 {
                     0 => 0,
                     _ => self.selected_position.0 - 1,
                 }
             }
-            (_, KeyCode::Down) => {
+            (KeyModifiers::NONE, KeyCode::Down) => {
                 self.selected_position.0 = match self.selected_position.0 {
                     4 => 4,
                     _ => self.selected_position.0 + 1,
                 }
             }
-            (_, KeyCode::Left) => {
+            (KeyModifiers::NONE, KeyCode::Left) => {
                 self.selected_position.1 = match self.selected_position.1 {
                     0 => 0,
                     _ => self.selected_position.1 - 1,
                 }
             }
-            (_, KeyCode::Right) => {
+            (KeyModifiers::NONE, KeyCode::Right) => {
                 self.selected_position.1 = match self.selected_position.1 {
                     4 => 4,
                     _ => self.selected_position.1 + 1,
                 }
             }
-            (_, KeyCode::Char('H') | KeyCode::Char('h')) => {
+            (KeyModifiers::SHIFT, KeyCode::Left) => {
                 let m = Move {
                     x: self.selected_position.1 as u8,
                     y: self.selected_position.0 as u8,
                     shift: Shift::LEFT,
                 };
-                if let Ok(b) = m.apply(self.turn, &self.board) {
+                if let None = self.thread_handle
+                    && let Ok(b) = m.apply(self.turn, &self.board)
+                {
                     self.board = b;
                     self.turn = self.turn.next();
                     self.winner = winner(&b);
                 }
             }
-            (_, KeyCode::Char('J') | KeyCode::Char('j')) => {
+            (KeyModifiers::SHIFT, KeyCode::Down) => {
                 let m = Move {
                     x: self.selected_position.1 as u8,
                     y: self.selected_position.0 as u8,
                     shift: Shift::BOTTOM,
                 };
-                if let Ok(b) = m.apply(self.turn, &self.board) {
+                if let None = self.thread_handle
+                    && let Ok(b) = m.apply(self.turn, &self.board)
+                {
                     self.board = b;
                     self.turn = self.turn.next();
                     self.winner = winner(&b);
                 }
             }
-            (_, KeyCode::Char('K') | KeyCode::Char('k')) => {
+            (KeyModifiers::SHIFT, KeyCode::Up) => {
                 let m = Move {
                     x: self.selected_position.1 as u8,
                     y: self.selected_position.0 as u8,
                     shift: Shift::TOP,
                 };
-                if let Ok(b) = m.apply(self.turn, &self.board) {
+                if let None = self.thread_handle
+                    && let Ok(b) = m.apply(self.turn, &self.board)
+                {
                     self.board = b;
                     self.turn = self.turn.next();
                     self.winner = winner(&b);
                 }
             }
-            (_, KeyCode::Char('L') | KeyCode::Char('l')) => {
+            (KeyModifiers::SHIFT, KeyCode::Right) => {
                 let m = Move {
                     x: self.selected_position.1 as u8,
                     y: self.selected_position.0 as u8,
                     shift: Shift::RIGHT,
                 };
-                if let Ok(b) = m.apply(self.turn, &self.board) {
+                if let None = self.thread_handle
+                    && let Ok(b) = m.apply(self.turn, &self.board)
+                {
                     self.board = b;
                     self.turn = self.turn.next();
                     self.winner = winner(&b);
@@ -215,12 +266,9 @@ impl App {
                     board: self.board,
                     player: self.turn,
                 };
-                let m = mcts(gm, 1000, 1000);
-                if let Some(m) = m {
-                    self.board = m.apply(self.turn, &self.board).unwrap();
-                    self.turn = self.turn.next();
-                    self.winner = winner(&self.board);
-                }
+                let (tx, rx) = mpsc::channel();
+                self.progress_channel = Some(rx);
+                self.thread_handle = Some(thread::spawn(move || mcts(gm, 1000, 1000, Some(tx))));
             }
             _ => {}
         }

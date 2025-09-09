@@ -21,9 +21,8 @@ The rules for Quixo are simple:
 
 ## Usage
 After you launch the program, it will print the board on your terminal. You can
-select a tile with arrows, and move the tile left, bottom, top, right with h, j,
-k, l respectively.  If the move you request is not valid, nothing happens.  You
-can request a move from the computer (computed with MCTS) with the c key.  Quit
-with q, reset with r. If one of the players win, nothing happens: you only see
-that the winner appears in the status bar, but you can keep making moves or
-reset the board.
+select a tile with arrows, and move the tile with shift + arrows. If the move
+you request is not valid, nothing happens.  You can request a move from the
+computer (computed with MCTS) with the c key.  Quit with q, reset with r. If one
+of the players wins, nothing happens: you only see that the winner appears in
+the status bar, but you can keep making moves or reset the board.
