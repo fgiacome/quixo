@@ -1,8 +1,9 @@
 # Quixo Player
 
 This repository contains a rust-only version of the Quixo player from the
-compint repository, without the Python interface, and with the addition of a
-nice Terminal User Interface (TUI). Enjoy playing!
+[compint](https://github.com/fgiacome/compint) repository, without the Python
+interface, and with the addition of a nice Terminal User Interface (TUI). Enjoy
+playing!
 
 Just run:
 ```bash
